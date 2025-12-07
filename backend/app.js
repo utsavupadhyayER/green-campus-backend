@@ -11,6 +11,8 @@ import donationRoutes from "./routes/donationRoutes.js";
 import impactRoutes from "./routes/impactRoutes.js";
 import leaderboardRoutes from "./routes/leaderboardRoutes.js";
 import { notFound, errorHandler } from "./middleware/errorMiddleware.js";
+import globalStatsRoutes from "./routes/globalStatsRoutes.js";
+
 
 dotenv.config();
 
@@ -28,6 +30,7 @@ app.use("/api/volunteers", volunteerRoutes);
 app.use("/api/donations", donationRoutes);
 app.use("/api/impact", impactRoutes);
 app.use("/api/leaderboard", leaderboardRoutes);
+app.use("/api/global-stats", globalStatsRoutes);
 
 // fallback handlers
 app.use(notFound);

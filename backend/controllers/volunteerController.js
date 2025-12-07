@@ -1,151 +1,194 @@
 // controllers/volunteerController.js
 import VolunteerEvent from "../models/volunteerModel.js";
 import User from "../models/userModel.js";
-import mongoose from "mongoose";
 
-/**
- * GET /api/volunteers
- * returns list of events with registered info populated
- */
+/* ---------------------------------------------------------
+   Helper: Check if current user is the creator OR admin
+--------------------------------------------------------- */
+function isEventCreatorOrAdmin(event, user) {
+  const userId = user._id.toString();
+  const createdBy = event.created_by?._id?.toString() || event.created_by?.toString();
 
+  const isCreator = createdBy === userId;
+  const isAdmin = user.role === "admin";
+
+  return isCreator || isAdmin;
+}
+
+/* ---------------------------------------------------------
+   Delete Event
+--------------------------------------------------------- */
 export const deleteVolunteer = async (req, res) => {
   try {
     const eventId = req.params.id;
     const event = await VolunteerEvent.findById(eventId);
     if (!event) return res.status(404).json({ message: "Event not found" });
 
-    const currentUserId = req.user._id.toString();
-    const isCreator = event.created_by?.toString() === currentUserId;
-    const isAdmin = req.user.role === "admin"; // <-- only admin + creator
-    if (!isCreator && !isAdmin) {
+    if (!isEventCreatorOrAdmin(event, req.user)) {
       return res.status(403).json({ message: "Not authorized to delete this event" });
     }
 
     await event.deleteOne();
     res.status(200).json({ message: "Deleted successfully" });
+
   } catch (err) {
     console.error("deleteVolunteer error:", err);
     res.status(500).json({ message: "Server error" });
   }
 };
 
+/* ---------------------------------------------------------
+   Get All Events
+--------------------------------------------------------- */
 export const getAllVolunteers = async (req, res) => {
   try {
     const events = await VolunteerEvent.find()
       .populate("created_by", "full_name email role")
       .populate("registered.user", "full_name email role volunteer_points");
+
     res.json(events);
+
   } catch (err) {
     console.error("getAllVolunteers error:", err);
     res.status(500).json({ message: "Server error" });
   }
 };
 
-/**
- * POST /api/volunteers
- * create volunteer event (creator must be authenticated)
- */
+/* ---------------------------------------------------------
+   Create Event
+--------------------------------------------------------- */
 export const createVolunteer = async (req, res) => {
   try {
-    const payload = { ...req.body, created_by: req.user._id };
+    const payload = {
+      ...req.body,
+      created_by: req.user._id,
+    };
+
     const event = await VolunteerEvent.create(payload);
     res.status(201).json(event);
+
   } catch (err) {
     console.error("createVolunteer error:", err);
     res.status(400).json({ message: "Invalid data or missing fields" });
   }
 };
 
-/**
- * POST /api/volunteers/:id/register
- * student registration for an event
- * - only students (or authenticated users) should call this
- * - prevents duplicate registration
- */
+/* ---------------------------------------------------------
+   Student Register For Event
+--------------------------------------------------------- */
 export const registerForEvent = async (req, res) => {
   try {
     const eventId = req.params.id;
-    const userId = req.user._id;
+    const userId = req.user._id.toString();
 
     const event = await VolunteerEvent.findById(eventId);
     if (!event) return res.status(404).json({ message: "Event not found" });
 
-    // prevent registering if event is not upcoming
-    if (event.status !== "upcoming" && event.status !== "ongoing") {
+    if (!["upcoming", "ongoing"].includes(event.status)) {
       return res.status(400).json({ message: "Cannot register for this event" });
     }
 
-    // check duplicates
-    const already = event.registered.find(r => r.user.toString() === userId.toString());
+    const already = event.registered.find(r => r.user.toString() === userId);
     if (already) return res.status(400).json({ message: "Already registered" });
 
-    // prevent overflow of max volunteers
     if (event.max_volunteers && event.registered_count >= event.max_volunteers) {
       return res.status(400).json({ message: "Event is full" });
     }
 
-    // push registration
     event.registered.push({ user: userId });
     event.registered_count = (event.registered_count || 0) + 1;
+
     await event.save();
 
-    const populated = await VolunteerEvent.findById(eventId).populate("registered.user", "full_name email role volunteer_points");
+    const populated = await VolunteerEvent.findById(eventId)
+      .populate("registered.user", "full_name email role volunteer_points");
 
     res.status(200).json({ message: "Registered", data: populated });
+
   } catch (err) {
     console.error("registerForEvent error:", err);
     res.status(500).json({ message: "Server error" });
   }
 };
 
-/**
- * POST /api/volunteers/:id/complete
- * Mark entire event as completed and award points to attendees (registered entries)
- * - can be called by event organizer (created_by) or admin/ngo (you can adjust)
- * - awards `points_reward` to registered users where points_awarded === false
- * - uses mongoose transaction when available (optional)
- */
+/* ---------------------------------------------------------
+   Mark Event as Completed + Award Points to All Registered
+--------------------------------------------------------- */
 export const completeEvent = async (req, res) => {
-  const eventId = req.params.id;
-
   try {
-    const event = await VolunteerEvent.findById(eventId).populate("registered.user", "full_name volunteer_points role");
+    const eventId = req.params.id;
+
+    const event = await VolunteerEvent.findById(eventId)
+      .populate("registered.user", "full_name volunteer_points role");
+
     if (!event) return res.status(404).json({ message: "Event not found" });
 
-    const currentUserId = req.user._id.toString();
-    const isCreator = event.created_by?.toString() === currentUserId;
-    const isAdmin = req.user.role === "admin"; // <-- admin allowed
-    // NOTE: Previously we allowed ngo also; now only event creator or admin.
-
-    if (!isCreator && !isAdmin) {
+    // Only event creator or admin
+    if (!isEventCreatorOrAdmin(event, req.user)) {
       return res.status(403).json({ message: "Not authorized to complete this event" });
     }
 
-    // ... rest of awarding logic remains the same ...
+    if (event.status === "completed") {
+      return res.status(400).json({ message: "Event already completed" });
+    }
+
+    const reward = event.points_reward || 0;
+
+    for (const entry of event.registered) {
+      if (!entry.points_awarded) {
+        entry.points_awarded = true;
+
+        await User.findByIdAndUpdate(entry.user._id || entry.user, {
+          $inc: { volunteer_points: reward },
+        });
+      }
+    }
+
+    event.status = "completed";
+    await event.save();
+
+    const updated = await VolunteerEvent.findById(eventId)
+      .populate("registered.user", "full_name volunteer_points role");
+
+    res.status(200).json({ message: "Event completed", data: updated });
+
   } catch (err) {
     console.error("completeEvent error:", err);
     res.status(500).json({ message: "Server error" });
   }
 };
-/**
- * POST /api/volunteers/:id/attendance/:userId
- * Mark a single registered user's attendance and award points (useful when you want to award individually)
- * - authorized: creator or admin/ngo
- */
+
+/* ---------------------------------------------------------
+   Mark a Single User's Attendance
+--------------------------------------------------------- */
 export const markAttendance = async (req, res) => {
   try {
     const { id: eventId, userId } = req.params;
+
     const event = await VolunteerEvent.findById(eventId);
     if (!event) return res.status(404).json({ message: "Event not found" });
 
-    const currentUserId = req.user._id.toString();
-    const isCreator = event.created_by?.toString() === currentUserId;
-    const isAdmin = req.user.role === "admin"; // <-- only admin + creator
-    if (!isCreator && !isAdmin) {
+    if (!isEventCreatorOrAdmin(event, req.user)) {
       return res.status(403).json({ message: "Not authorized" });
     }
 
-    // ... award single user logic remains the same ...
+    const entry = event.registered.find(r => r.user.toString() === userId);
+    if (!entry) return res.status(404).json({ message: "User not registered" });
+
+    if (entry.points_awarded) {
+      return res.status(400).json({ message: "Points already awarded" });
+    }
+
+    entry.points_awarded = true;
+
+    await User.findByIdAndUpdate(userId, {
+      $inc: { volunteer_points: event.points_reward || 0 },
+    });
+
+    await event.save();
+
+    res.status(200).json({ message: "Attendance marked & points awarded" });
+
   } catch (err) {
     console.error("markAttendance error:", err);
     res.status(500).json({ message: "Server error" });

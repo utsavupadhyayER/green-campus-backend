@@ -1,16 +1,23 @@
-// models/userModel.js
 import mongoose from "mongoose";
 
-const userSchema = new mongoose.Schema({
-  full_name: { type: String, required: true },
-  email: { type: String, required: true, unique: true },
-  password: { type: String, required: true },
-  role: { type: String, enum: ["student", "ngo", "admin", "mess_staff"], required: true },
-  volunteer_points: { type: Number, default: 0 },
-  avatar_url: { type: String },
-}, { timestamps: true });
+const userSchema = new mongoose.Schema(
+  {
+    full_name: { type: String, required: true, trim: true },
+    email: { type: String, required: true, unique: true, lowercase: true, trim: true },
+    password: { type: String, required: true },
 
-// add index for leaderboard queries (fast sorting by points)
+    role: {
+      type: String,
+      enum: ["student", "ngo", "admin", "mess_staff"],
+      default: "student",
+    },
+
+    volunteer_points: { type: Number, default: 0 },
+    avatar_url: { type: String },
+  },
+  { timestamps: true }
+);
+
 userSchema.index({ volunteer_points: -1 });
 
 export default mongoose.model("User", userSchema);
