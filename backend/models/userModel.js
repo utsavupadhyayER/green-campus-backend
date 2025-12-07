@@ -1,3 +1,4 @@
+// models/userModel.js
 import mongoose from "mongoose";
 
 const userSchema = new mongoose.Schema({
@@ -8,5 +9,8 @@ const userSchema = new mongoose.Schema({
   volunteer_points: { type: Number, default: 0 },
   avatar_url: { type: String },
 }, { timestamps: true });
+
+// add index for leaderboard queries (fast sorting by points)
+userSchema.index({ volunteer_points: -1 });
 
 export default mongoose.model("User", userSchema);

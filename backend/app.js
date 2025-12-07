@@ -9,6 +9,7 @@ import ewasteRoutes from "./routes/ewasteRoutes.js";
 import volunteerRoutes from "./routes/volunteerRoutes.js";
 import donationRoutes from "./routes/donationRoutes.js";
 import impactRoutes from "./routes/impactRoutes.js";
+import leaderboardRoutes from "./routes/leaderboardRoutes.js";
 import { notFound, errorHandler } from "./middleware/errorMiddleware.js";
 
 dotenv.config();
@@ -26,6 +27,7 @@ app.use("/api/ewaste", ewasteRoutes);
 app.use("/api/volunteers", volunteerRoutes);
 app.use("/api/donations", donationRoutes);
 app.use("/api/impact", impactRoutes);
+app.use("/api/leaderboard", leaderboardRoutes);
 
 // fallback handlers
 app.use(notFound);
